@@ -1,0 +1,281 @@
+// =====================================================================
+// masters.js  ―― マスタの「唯一の真実の源泉」
+// 店舗・大分類・商材(MID)・プラン・オプション・機種・スタッフは
+// すべてここだけに書く。各画面はここから読む（ハードコードの分散＝継ぎ足しを防ぐ）。
+// 商材を増やす/直すときも、変更は原則このファイル1か所だけ。
+// =====================================================================
+
+// ---- 店舗 ----
+export const STORES = [
+  { id: 'STORE_001', name: 'auStyleイオン上磯' },
+  { id: 'STORE_002', name: 'auStyle中道' },
+  { id: 'STORE_003', name: 'auStyle日吉' },
+  { id: 'STORE_004', name: 'auショップ松前' },
+  { id: 'STORE_005', name: 'サテライト上磯' },        // 旧トライアル上磯（改称・ID維持）
+  { id: 'STORE_006', name: 'アットモバイル' },          // KDDI目標なし・専属ホームスタッフなし
+  { id: 'STORE_007', name: '中道イベント', isEvent: true, host: 'STORE_002' },
+  { id: 'STORE_008', name: '日吉イベント', isEvent: true, host: 'STORE_003' },
+  { id: 'STORE_009', name: '上磯イベント', isEvent: true, host: 'STORE_001' },
+];
+// 目標・達成率で使う主要店（イベント店を除く）
+export const MAIN_STORES = STORES.filter(s => !s.isEvent);
+// イベント店 → 主催店（開通店）の対応表。
+// 店舗単位で数える場面では、イベント店の獲得は必ず主催店に合算する（開通店舗の数字が狂わないこと＝第一前提）。
+// 「どこで誰が獲得したか」の見える化はイベント集計画面が担当（そちらはイベント店のまま表示）。
+export const EVENT_HOST = Object.fromEntries(STORES.filter(s => s.host).map(s => [s.id, s.host]));
+export const storeName = (id) => STORES.find(s => s.id === id)?.name || '';
+
+// ---- 大分類 ----
+export const MAIN_CAT = [
+  { id: 'MAIN_001', name: '新規' },
+  { id: 'MAIN_002', name: 'MNP' },
+  { id: 'MAIN_003', name: '機種変更' },
+  { id: 'MAIN_004', name: 'アップセル' },
+  { id: 'MAIN_005', name: 'その他' },
+  { id: 'MAIN_006', name: '金融・コンテンツ' },
+];
+
+// ---- 中分類(商材 MID) ----  main=大分類ID
+export const MID_CAT = [
+  { id: 'MID_001', main: 'MAIN_001', name: 'auH新規O60' },
+  { id: 'MID_002', main: 'MAIN_001', name: 'auS新規O60' },
+  { id: 'MID_003', main: 'MAIN_001', name: 'auH新規O19' },
+  { id: 'MID_004', main: 'MAIN_001', name: 'auS新規O19' },
+  { id: 'MID_005', main: 'MAIN_001', name: 'auH新規U18' },
+  { id: 'MID_006', main: 'MAIN_001', name: 'auS新規U18' },
+  { id: 'MID_007', main: 'MAIN_001', name: 'UQH新規O60' },
+  { id: 'MID_008', main: 'MAIN_001', name: 'UQS新規O60' },
+  { id: 'MID_009', main: 'MAIN_001', name: 'UQH新規O19' },
+  { id: 'MID_010', main: 'MAIN_001', name: 'UQS新規O19' },
+  { id: 'MID_011', main: 'MAIN_001', name: 'UQH新規U18' },
+  { id: 'MID_012', main: 'MAIN_001', name: 'UQS新規U18' },
+  { id: 'MID_013', main: 'MAIN_001', name: '新規持込U18' },
+  { id: 'MID_014', main: 'MAIN_001', name: '新規持込O60' },
+  { id: 'MID_015', main: 'MAIN_001', name: '新規持込O19' },
+  { id: 'MID_016', main: 'MAIN_001', name: 'タブレット新規' },
+  { id: 'MID_017', main: 'MAIN_002', name: 'auSMNP' },
+  { id: 'MID_018', main: 'MAIN_002', name: 'auHMNP' },
+  { id: 'MID_019', main: 'MAIN_002', name: 'UQSMNP' },
+  { id: 'MID_020', main: 'MAIN_002', name: 'UQHMNP' },
+  { id: 'MID_021', main: 'MAIN_003', name: 'au機変' },
+  { id: 'MID_022', main: 'MAIN_003', name: 'au持込機変' },
+  { id: 'MID_023', main: 'MAIN_003', name: 'UQ機変' },
+  { id: 'MID_024', main: 'MAIN_003', name: 'UQ持込機変' },
+  { id: 'MID_025', main: 'MAIN_004', name: 'アップセルSP' },
+  { id: 'MID_026', main: 'MAIN_004', name: 'アップセルFP' },
+  { id: 'MID_027', main: 'MAIN_004', name: 'アップセルSIM' },
+  { id: 'MID_035', main: 'MAIN_004', name: 'UQ番号移行' },
+  { id: 'MID_057', main: 'MAIN_005', name: 'UQ番号移行(リクープ)' },
+  { id: 'MID_028', main: 'MAIN_003', name: '端末単体購入' },
+  { id: 'MID_029', main: 'MAIN_003', name: 'タブレット機変' },
+  { id: 'MID_030', main: 'MAIN_005', name: 'auひかり' },
+  { id: 'MID_031', main: 'MAIN_005', name: 'ビッグローブ光' },
+  { id: 'MID_032', main: 'MAIN_005', name: 'WiMAX' },
+  { id: 'MID_033', main: 'MAIN_005', name: '固定代替' },
+  { id: 'MID_063', main: 'MAIN_005', name: 'NCV(CATV)' },     // CSVに合わせ追加
+  { id: 'MID_034', main: 'MAIN_005', name: 'アクセサリー' },
+  { id: 'MID_064', main: 'MAIN_005', name: 'Norton' },        // CSVに合わせ追加
+  { id: 'MID_036', main: 'MAIN_005', name: 'Apple製品' },
+  { id: 'MID_037', main: 'MAIN_005', name: 'テレビ' },
+  { id: 'MID_038', main: 'MAIN_005', name: 'タブレット物販' },
+  { id: 'MID_060', main: 'MAIN_005', name: 'スマートウォッチ' },
+  { id: 'MID_061', main: 'MAIN_005', name: 'スマートバスマット' },
+  { id: 'MID_062', main: 'MAIN_005', name: 'スマートリング' },
+  { id: 'MID_058', main: 'MAIN_005', name: '店頭サポート定額' },
+  { id: 'MID_041', main: 'MAIN_006', name: 'au PAYゴールド' },
+  { id: 'MID_042', main: 'MAIN_006', name: 'au PAYG_RU' },
+  { id: 'MID_043', main: 'MAIN_006', name: 'au PAY カード' },
+  { id: 'MID_044', main: 'MAIN_006', name: 'auじぶん銀行' },
+  { id: 'MID_045', main: 'MAIN_006', name: 'auでんき' },
+  { id: 'MID_046', main: 'MAIN_006', name: 'FPトス' },
+  { id: 'MID_047', main: 'MAIN_006', name: 'Netflix' },
+  { id: 'MID_048', main: 'MAIN_006', name: 'YouTube Premium' },
+  { id: 'MID_049', main: 'MAIN_006', name: 'Apple Music' },
+  { id: 'MID_050', main: 'MAIN_006', name: 'TELASA' },
+  { id: 'MID_051', main: 'MAIN_006', name: 'Google AI Pro' },
+  { id: 'MID_052', main: 'MAIN_006', name: 'おうちサポート' },
+  { id: 'MID_053', main: 'MAIN_006', name: 'わんにゃんサポート' },
+  { id: 'MID_054', main: 'MAIN_006', name: '自転車サポート' },
+  { id: 'MID_055', main: 'MAIN_006', name: '保証' },
+  { id: 'MID_056', main: 'MAIN_006', name: '持込保証' },
+  { id: 'MID_059', main: 'MAIN_006', name: 'Amazonプライム' },
+];
+export const midName = (id) => MID_CAT.find(m => m.id === id)?.name || '';
+export const midsByMain = (mainId) => MID_CAT.filter(m => m.main === mainId);
+
+// LTV5商材（回線 au/UQ が必須）: でんき / PAYカード / ゴールド / じぶん銀行 / Ponta(OPT_115は別途)
+export const LINE_REQUIRED_MIDS = ['MID_041', 'MID_042', 'MID_043', 'MID_044', 'MID_045'];
+export const PONTA_OPT = 'OPT_115';
+
+// ---- 機種 ----
+export const MODELS = [
+  { maker: 'Apple', models: ['iPhone 17 Pro Max', 'iPhone 17 Pro', 'iPhone 17 Air', 'iPhone 17', 'iPhone 17e', 'iPhone 16e', 'iPhone SE3', 'iPhone 16 Pro Max', 'iPhone 16 Pro', 'iPhone 16', 'iPhone 15', 'iPhone 14'] },
+  { maker: 'Apple Certified', models: ['auC iPhone 15', 'auC iPhone 15 Pro', 'auC iPhone 14', 'auC iPhone 14 Pro', 'auC iPhone 13', 'auC iPhone 13 Pro', 'auC iPhone 13 mini', 'auC iPhoneSE3'] },
+  { maker: 'Google', models: ['Pixel 10 Pro XL', 'Pixel 10 Pro', 'Pixel 10', 'Pixel 9 Pro', 'Pixel 9a', 'Pixel 8a', 'Pixel 9'] },
+  { maker: 'Samsung', models: ['Galaxy S26 Ultra', 'Galaxy S26', 'Galaxy S25 Ultra', 'Galaxy S25', 'Galaxy Z Fold6', 'Galaxy Z Fold7', 'Galaxy Z Flip6', 'Galaxy Z Flip7', 'Galaxy S26+', 'Galaxy A55', 'Galaxy A25', 'Galaxy S24 FE'] },
+  { maker: 'WiMAX', models: ['DOCK 5G'] },
+  { maker: 'その他', models: ['AQUOS sense9', 'AQUOS sense10', 'AQUOS wish4', 'Xperia 1 VII', 'Xperia 10 VI', 'Xperia 10 VII', 'BASIO active2', 'BASIO active3', 'TORQUE G06', 'TORQUE G07', 'らくらくスマートフォンLite FCG03', 'arrows We3', 'arrows We2', 'Xiaomi 14T', 'Redmi Note13 Pro 5G XIG05', 'OPPO Find X9 OPG07', 'OPPO A5 OPG06', 'OPPO Reno15 A', 'OPPO Reno13 A OPG05', 'motorola edge60 MOG02', 'motorola razr60 ultra MOG01', 'mamorino6 KYF35', 'mamorino5 KYF40', 'かんたんケータイ', 'タブレット', 'なし(SIMのみ)'] },
+];
+export const modelsByMaker = (maker) => MODELS.find(m => m.maker === maker)?.models || [];
+
+// ---- プラン ----
+export const PLANS = [
+  { id: 'P_103', name: '使い放題MAX+' }, { id: 'P_104', name: '使い放題MAX+ Netflix2' }, { id: 'P_105', name: '使い放題MAX+ ドラマバラエティ' },
+  { id: 'P_106', name: '使い放題MAX+ DAZN' }, { id: 'P_107', name: '使い放題MAX+ ALLSTAR2' }, { id: 'P_108', name: '使い放題MAX+ マネ活2' },
+  { id: 'P_109', name: 'auマネ活+' }, { id: 'P_110', name: 'auマネ活+ Amazon' }, { id: 'P_111', name: 'auマネ活+ Netflix2' },
+  { id: 'P_112', name: 'auマネ活+ ドラマバラエティ' }, { id: 'P_113', name: 'auマネ活+ DAZN' }, { id: 'P_114', name: 'auマネ活+ ALLSTAR2' },
+  { id: 'P_115', name: 'スマホミニ+' }, { id: 'P_116', name: 'スマホスタート' }, { id: 'P_117', name: 'スマホスタートライト' },
+  { id: 'P_118', name: 'シニアバリュー(au)' }, { id: 'P_119', name: 'ケータイシンプル' }, { id: 'P_101', name: 'コミコミ＋' },
+  { id: 'P_102', name: 'トクトク2' }, { id: 'P_120', name: 'ミニミニ' }, { id: 'P_121', name: 'U12バリュー' },
+  { id: 'P_122', name: 'U16バリュー' }, { id: 'P_123', name: 'U18バリュー' }, { id: 'P_124', name: 'シニアバリュー(UQ)' },
+  { id: 'P_125', name: 'auひかり ホーム' }, { id: 'P_126', name: 'auひかり マンション' }, { id: 'P_127', name: 'ビッグローブ光 戸建' },
+  { id: 'P_128', name: 'ビッグローブ光 マンション' }, { id: 'P_129', name: 'WiMAX +5G' }, { id: 'P_130', name: 'タブレットプランライト' },
+  { id: 'P_131', name: 'タブレットプランフラット' }, { id: 'P_132', name: 'バリューリンク' }, { id: 'P_136', name: 'バリューリンクマネ活2' },
+  { id: 'P_137', name: 'コミコミバリュー' }, { id: 'P_133', name: 'タブレットシェアプラン' }, { id: 'P_134', name: 'タブレットプラン3' },
+  { id: 'P_135', name: 'タブレットプラン50' }, { id: 'P_000', name: 'なし（プラン不要）' },
+];
+export const planName = (id) => PLANS.find(p => p.id === id)?.name || '';
+
+// ---- オプション ----
+export const OPTS = [
+  { id: 'OPT_101', name: '通話定額2' }, { id: 'OPT_102', name: '通話定額ライト2' }, { id: 'OPT_103', name: '通話放題' },
+  { id: 'OPT_104', name: '通話放題ライト' }, { id: 'OPT_105', name: '通話パック60' }, { id: 'OPT_106', name: '店頭設定サポート' },
+  { id: 'OPT_107', name: '故障紛失サポート' }, { id: 'OPT_108', name: '故障紛失AppleCare' }, { id: 'OPT_109', name: '故障紛失ワイドAppleCare' },
+  { id: 'OPT_110', name: '使い方サポート' }, { id: 'OPT_112', name: 'サポート定額' }, { id: 'OPT_113', name: 'au自転車サポート' },
+  { id: 'OPT_114', name: 'わんにゃんサポート' }, { id: 'OPT_115', name: 'Pontaパス' }, { id: 'OPT_116', name: 'Netflix' },
+  { id: 'OPT_117', name: 'YouTube Premium' }, { id: 'OPT_118', name: 'Apple Music' }, { id: 'OPT_119', name: 'DAZN' },
+  { id: 'OPT_121', name: 'Amazonプライム' }, { id: 'OPT_122', name: 'GeForce NOW' }, { id: 'OPT_124', name: 'FPトス' },
+  { id: 'OPT_125', name: '増量オプションII' }, { id: 'OPT_126', name: '家族割プラス' }, { id: 'OPT_127', name: '自宅セット割' },
+  { id: 'OPT_128', name: 'auPAYカード割' }, { id: 'OPT_129', name: 'UQ親子応援割' }, { id: 'OPT_130', name: 'auマネ活特典' },
+  { id: 'OPT_131', name: 'おうちサポート' },
+];
+export const optName = (id) => OPTS.find(o => o.id === id)?.name || '';
+
+// ---- 獲得区分・契約種別 ----
+export const ACQ_TYPES = [
+  { id: 'self', name: '自己獲得', icon: '🙋', desc: 'カウント対象', color: '#34D399' },
+  { id: 'outsource', name: '外注スタッフ', icon: '👷', desc: 'カウント対象外', color: '#F87171' },
+  { id: 'proxy', name: '代理報告', icon: '🤝', desc: '他スタッフの実績', color: '#38BDF8' },
+];
+export const CONTRACT_TYPES = [
+  { id: 'personal', name: '個人契約', icon: '👤' },
+  { id: 'corporate', name: '法人契約', icon: '🏢' },
+];
+export const OUTSOURCERS = ['エイブ', '5LANCE', 'ソムリエ', 'JOYXSEED', 'ISコネクト'];
+
+// ---- スタッフ ----
+// ※ スタッフの所属店マッピング(STAFF_STORE_MAP)は現行Rankingに存在。
+//   将来ここに {name, storeId} で集約予定（今は名前のみ・要・突き合わせ）。
+export const STAFF = [
+  '竹内 由', '増川 美由紀', '平井 裕太', '宮成 裕子', '三上 浩平', '長谷川 彩香', '蛯子 竜志', '菊池 健太',
+  '鈴木 一生', '佐藤 胡桃', '佐藤 蓮', '小川 哲平', '小畠 恵美子', '新川 優太', '森 一護', '成田 正磨',
+  '斉藤 亮介', '赤石 航希', '長谷川 七美', '柳沼 千絵', '對馬 未久', '館石 優奈', '石山 諒', '波 綾香',
+  '福田 依央', '小野 瑛弘', '高橋 亜紀子', '加藤 絵里', '太田 智輔', '加藤 菜摘', '相澤 伽奈', '松原 陸也',
+  '飯田 花奈', '林 皓太', '原 琴音',
+];
+
+// ---- 管理者（実績報告は行わない・システム管理者扱い）----
+// 社長・経理など、報告に載らないが管理目的でログインする人。
+// STAFFランキング・インセンティブ・所属店マスタの対象外。
+export const ADMINS = ['小野 康平', '小野 美紀'];
+export const isAdmin = (name) => ADMINS.includes(name);
+
+// ---- スタッフ所属店マスタ（店舗内ランキング・チーム賞で使用）----
+// 現行Rankingから取り込み。キーはスペース除去・表記ゆれ（対馬/對馬・石山颯/諒）も登録済み。
+export const STAFF_STORE_MAP = {
+  '竹内由': 'STORE_003', '福田依央': 'STORE_003', '三上浩平': 'STORE_003', '松原陸也': 'STORE_003',
+  '佐藤蓮': 'STORE_003', '成田正磨': 'STORE_003', '長谷川彩香': 'STORE_003', '佐藤胡桃': 'STORE_003', '林皓太': 'STORE_003', '原琴音': 'STORE_003',
+  '柳沼千絵': 'STORE_002', '相澤伽奈': 'STORE_002', '小川哲平': 'STORE_002', '対馬未久': 'STORE_002', '對馬未久': 'STORE_002',
+  '太田智輔': 'STORE_002', '宮成裕子': 'STORE_003', '赤石航希': 'STORE_002', '小畠恵美子': 'STORE_002',
+  '菊池健太': 'STORE_002', '斉藤亮介': 'STORE_002', '飯田花奈': 'STORE_002', '小野瑛弘': 'STORE_002',
+  '高橋亜紀子': 'STORE_001', '長谷川七美': 'STORE_001', '波綾香': 'STORE_001', '新川優太': 'STORE_001',
+  '館石優奈': 'STORE_001', '加藤絵里': 'STORE_001', '森一護': 'STORE_001', '蛯子竜志': 'STORE_001',
+  '増川美由紀': 'STORE_004', '石山颯': 'STORE_004', '石山諒': 'STORE_004',
+  '鈴木一生': 'STORE_005',
+  '平井裕太': 'STORE_002', '加藤菜摘': 'STORE_001',
+};
+const _normName = (s) => (s || '').replace(/[\s\u3000]+/g, '');
+export const staffStore = (name) => STAFF_STORE_MAP[_normName(name)] || null;
+export const hasStaffStoreMap = () => Object.keys(STAFF_STORE_MAP).length > 0;
+
+// ---- LINE通知（日次プッシュ用GAS） ----
+export const GAS_URL = 'https://script.google.com/macros/s/AKfycbzWeYny7QB_VbyR-8wXNXpTOjJ8qz9uQ7NzWiarOsGGWpKIo8-D8xPqfobWAdmUEFx8/exec';
+
+// =====================================================================
+// 略称辞書（LINEの1行表示用）。直したいときは、ここ1か所だけ直せばOK。
+// 未登録のものは自動でフルネームにフォールバックします。
+// =====================================================================
+export const STORE_SHORT = {
+  STORE_001: 'イオン上磯', STORE_002: '中道', STORE_003: '日吉', STORE_004: '松前',
+  STORE_005: 'サテ上磯', STORE_006: 'アット',
+  STORE_007: '中道イベ', STORE_008: '日吉イベ', STORE_009: '上磯イベ',
+};
+export const storeShort = (id) => STORE_SHORT[id] || storeName(id);
+
+export const OUT_SHORT = { 'エイブ': 'エイブ', '5LANCE': '5L', 'ソムリエ': 'ソム', 'JOYXSEED': 'JOY', 'ISコネクト': 'IS' };
+export const outShort = (co) => OUT_SHORT[co] || co;
+
+export const MID_SHORT = {
+  MID_001: 'aH新O60', MID_002: 'aS新O60', MID_003: 'aH新O19', MID_004: 'aS新O19', MID_005: 'aH新U18', MID_006: 'aS新U18',
+  MID_007: 'uH新O60', MID_008: 'uS新O60', MID_009: 'uH新O19', MID_010: 'uS新O19', MID_011: 'uH新U18', MID_012: 'uS新U18',
+  MID_013: '持新U18', MID_014: '持新O60', MID_015: '持新O19',
+  MID_017: 'aSM', MID_018: 'aHM', MID_019: 'uSM', MID_020: 'uHM',
+  MID_021: 'a機変', MID_022: 'a持機変', MID_023: 'u機変', MID_024: 'u持機変', MID_028: '単体購入',
+  MID_057: 'UQリープ', MID_035: 'UQ移行',
+  MID_041: 'ゴールド', MID_042: 'G_RU', MID_043: 'PAYカード', MID_044: 'じぶん銀行', MID_045: 'でんき',
+  MID_058: '店サポ定額', MID_052: 'おうちサポ', MID_053: 'わんにゃん', MID_054: '自転車',
+  MID_060: 'ウォッチ', MID_061: 'バスマット', MID_062: 'リング',
+  MID_038: 'タブ物販', MID_016: 'タブ新', MID_029: 'タブ機変', MID_063: 'NCV',
+  MID_030: 'ひかり', MID_031: 'BL光', MID_033: '固定代替',
+};
+export const midShort = (id) => MID_SHORT[id] || midName(id);
+
+export const OPT_SHORT = {
+  OPT_107: '故紛', OPT_108: 'AC', OPT_109: 'ACワイド', OPT_106: '店設定', OPT_110: '使い方', OPT_112: 'サポ定額',
+  OPT_115: 'Ponta', OPT_117: 'YouTube', OPT_118: 'AppleMusic', OPT_124: 'FP',
+  OPT_101: '通話2', OPT_102: '通話L2', OPT_103: '通話放題', OPT_104: '通話放題L',
+  OPT_125: '増量II', OPT_126: '家族割+', OPT_127: '自宅セット割', OPT_128: 'PAYカード割', OPT_131: 'おうちサポ',
+};
+export const optShort = (id) => OPT_SHORT[id] || optName(id);
+
+export const PLAN_SHORT = {
+  P_103: 'MAX+', P_104: 'MAX+N2', P_105: 'MAX+ドラバラ', P_106: 'MAX+DAZN', P_107: 'MAX+AS2', P_108: 'MAX+マネ活2',
+  P_109: 'マネ活+', P_110: 'マネ活+Amazon', P_111: 'マネ活+N2', P_112: 'マネ活+ドラバラ', P_113: 'マネ活+DAZN', P_114: 'マネ活+AS2',
+  P_115: 'ミニ+', P_116: 'スタート', P_117: 'スタートL', P_101: 'コミコミ+', P_102: 'トクトク2', P_120: 'ミニミニ', P_137: 'コミコミV',
+};
+export const planShort = (id) => PLAN_SHORT[id] || planName(id);
+
+// ---- 機種コード（Apple iPhone 17 Pro → iP17Pro など）----
+// 規則で自動短縮し、特殊なものだけ MODEL_SHORT で上書き。
+const compressModel = (m = '') => {
+  let s = String(m)
+    .replace(/^Apple\s+/, '')
+    .replace('iPhone ', 'iP')
+    .replace('Pixel ', 'P')
+    .replace('Galaxy ', 'G')
+    .replace('AQUOS ', 'AQ')
+    .replace('Xperia ', 'X')
+    .replace('TORQUE ', 'T')
+    .replace('motorola ', '')
+    .replace(/\s+/g, '');
+  return s.replace('ProMax', 'PM');
+};
+export const MODEL_SHORT = {
+  'auC iPhone 15': 'C15', 'auC iPhone 15 Pro': 'C15Pro', 'auC iPhone 14': 'C14', 'auC iPhone 14 Pro': 'C14Pro',
+  'auC iPhone 13': 'C13', 'auC iPhone 13 Pro': 'C13Pro', 'auC iPhone 13 mini': 'C13mini', 'auC iPhoneSE3': 'CSE3',
+  'iPhone SE3': 'iPSE3', 'なし(SIMのみ)': 'SIMのみ', 'タブレット': 'タブ', 'DOCK 5G': 'DOCK5G',
+  'らくらくスマートフォンLite FCG03': 'らくらくLite',
+};
+export const modelShort = (m) => MODEL_SHORT[m] || compressModel(m || '');
+
+// ---- 乗換元キャリアの略称（MNPのdirection用）----
+export const CARRIER_SHORT = {
+  'docomo': 'dcm', 'ドコモ': 'dcm', 'softbank': 'SB', 'ソフトバンク': 'SB', 'sb': 'SB',
+  'ワイモバイル': 'YM', 'ymobile': 'YM', 'y!mobile': 'YM', 'ワイモバ': 'YM',
+  '楽天': '楽天', '楽天モバイル': '楽天', 'rakuten': '楽天',
+  'ahamo': 'ahamo', 'povo': 'povo', 'linemo': 'LINEMO', 'uq': 'UQ', 'au': 'au', 'mineo': 'mineo', 'irumo': 'irumo',
+};
+export const carrierShort = (raw = '') => {
+  const s = String(raw).replace(/[→\[\]\s]/g, '');
+  return CARRIER_SHORT[s] || CARRIER_SHORT[s.toLowerCase()] || s;
+};

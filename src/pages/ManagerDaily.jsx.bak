@@ -1,0 +1,390 @@
+import { useEffect, useMemo, useState } from 'react';
+import { collection, onSnapshot, doc, setDoc, query, where, Timestamp } from 'firebase/firestore';
+import { db } from '../firebase';
+import { useAuth } from '../contexts/AuthContext';
+import { STAFF, STORES, MAIN_STORES, EVENT_HOST, staffStore, storeName } from '../data/masters';
+import { aggregate } from '../lib/aggregate';
+import * as XLSX from 'xlsx';
+
+/* ───────── 色・部品 ───────── */
+const C = {
+  gold: '#FBBF24', green: '#34D399', red: '#F87171', blue: '#38BDF8', purple: '#A78BFA',
+  w: '#fff', w2: '#E2E8F0', mut: '#94A3B8', mut2: '#64748B',
+  card: 'rgba(255,255,255,0.02)', line: '1px solid rgba(255,255,255,0.06)',
+};
+const card = { background: C.card, border: C.line, borderRadius: 12, padding: 12, marginBottom: 10 };
+const inp = { width: '100%', padding: 8, borderRadius: 8, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: C.w, fontSize: 12, outline: 'none', boxSizing: 'border-box' };
+const norm = (s) => (s || '').replace(/[\s\u3000]+/g, '');
+const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const pct = (a, t) => (t ? Math.round((a / t) * 100) : null);
+
+/* ───────── 指標の定義（目標グループの合計で作る）───────── */
+const KPI = [
+  { key: 'shinki', label: '新規MNP', short: '新規MNP', groups: ['g_au_mnp', 'g_uq_mnp', 'g_au_u18', 'g_uq_u18', 'g_au_o60', 'g_uq_o60'], color: C.green, main: true },
+  { key: 'mnp',    label: 'MNP',    short: 'MNP',    groups: ['g_au_mnp', 'g_uq_mnp'], color: C.green },
+  { key: 'kihen',  label: '機種変更', short: '機変',  groups: ['g_hs_au', 'g_hs_uq'], color: C.gold, main: true },
+  { key: 'up',     label: 'UQ→au',  short: 'UQ→au',  groups: ['g_up_au'], color: C.purple, main: true },
+  { key: 'gold',   label: 'ゴールド', short: 'ゴールド', groups: ['g_paygold_au', 'g_paygold_uq'], color: C.gold },
+  { key: 'kotei',  label: '固定',   short: '固定',   groups: ['g_hikari', 'g_hikari_p1', 'g_hikari_p2', 'g_hikari_p3', 'g_bl', 'g_kotei_daitai', 'g_ncv', 'g_wimax'], color: C.blue },
+  { key: 'denki',  label: 'でんき', short: 'でんき', groups: ['g_denki_au', 'g_denki_uq'], color: C.red },
+];
+const sumGroups = (byGroup, groups) => groups.reduce((s, g) => s + (byGroup?.[g] || 0), 0);
+
+/* ───────── 週の関門（毎月共通。日と割合）───────── */
+const GATES = [
+  { day: 5, rate: 0.25, label: '5日 25%' },
+  { day: 12, rate: 0.50, label: '12日 50%' },
+  { day: 19, rate: 0.75, label: '19日 75%' },
+  { day: 20, rate: 0.80, label: '20日 80%' },
+];
+
+/* 計上先の見方
+   acq : 獲得店舗で見る（報告の店舗そのまま。アット・サテ・イベントは自分の行）
+   open: 開通コードで見る（開通先 → なければイベントは母店 → なければ獲得店舗。KDDIのID単位） */
+const creditStoreBy = (r, basis) => basis === 'open' ? (r.openStoreId || EVENT_HOST[r.storeId] || r.storeId) : r.storeId;
+
+export default function ManagerDaily() {
+  const { user, profile, isAdmin, isManager } = useAuth();
+  const me = profile?.name || '';
+  const homeStore = profile?.storeId || staffStore(me) || MAIN_STORES[0]?.id;
+  const today = ymd(new Date());
+
+  const [date, setDate] = useState(today);
+  const [storeId, setStoreId] = useState(homeStore);      // '' = 全店
+  const [basis, setBasis] = useState('acq');               // 'acq'=獲得店舗 / 'open'=開通コード
+  const creditStore = (r) => creditStoreBy(r, basis);
+  const listStores = basis === 'acq' ? STORES : MAIN_STORES;
+  const [reports, setReports] = useState([]);
+  const [targets, setTargets] = useState({});             // storeId -> groupTargets
+  const [actions, setActions] = useState({});             // storeId -> {staff:{name:{met,prop}}, memo}
+  const [monthActions, setMonthActions] = useState([]);   // その月の全dailyActions（Excel用）
+  const [dirStaff, setDirStaff] = useState(null);           // スタッフ台帳（管理→スタッフ・店舗管理）
+  const [draft, setDraft] = useState({ staff: {}, memo: '' });
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  const month = date.slice(0, 7);
+  const monthStart = useMemo(() => new Date(date.slice(0, 4), Number(date.slice(5, 7)) - 1, 1), [date]);
+  const monthEnd = useMemo(() => new Date(date.slice(0, 4), Number(date.slice(5, 7)), 0), [date]);
+  const dayNum = Number(date.slice(8, 10));
+  const daysInMonth = monthEnd.getDate();
+
+  /* ── その月の報告を購読 ── */
+  useEffect(() => {
+    if (!user) return;
+    const t0 = Timestamp.fromDate(monthStart);
+    const t1 = Timestamp.fromDate(new Date(monthEnd.getFullYear(), monthEnd.getMonth(), monthEnd.getDate() + 1));
+    const q = query(collection(db, 'reports'), where('createdAt', '>=', t0), where('createdAt', '<', t1));
+    return onSnapshot(q, (s) => setReports(s.docs.map(d => ({ id: d.id, ...d.data() }))));
+  }, [user, monthStart, monthEnd]);
+
+  /* ── 月目標を購読（storeTargets: STORE_xxx_YYYY-MM）── */
+  useEffect(() => {
+    if (!user) return;
+    return onSnapshot(collection(db, 'storeTargets'), (s) => {
+      const m = {};
+      s.docs.forEach(d => { const v = d.data(); if (d.id.endsWith('_' + month)) m[v.storeId || d.id.replace('_' + month, '')] = v.groupTargets || {}; });
+      setTargets(m);
+    });
+  }, [user, month]);
+
+  /* ── 終礼の行動数を購読（dailyActions: STORE_xxx_YYYY-MM-DD）── */
+  useEffect(() => {
+    if (!user) return;
+    const q = query(collection(db, 'dailyActions'), where('date', '==', date));
+    return onSnapshot(q, (s) => {
+      const m = {}; s.docs.forEach(d => { const v = d.data(); m[v.storeId] = v; });
+      setActions(m);
+    });
+  }, [user, date]);
+  useEffect(() => { setDraft({ staff: actions[storeId]?.staff || {}, memo: actions[storeId]?.memo || '' }); }, [actions, storeId]);
+  useEffect(() => {
+    if (!user) return;
+    return onSnapshot(collection(db, 'staffDirectory'), (s) => {
+      setDirStaff(s.docs.map(d => d.data()).filter(v => v.active !== false && !v.retiredAt && v.name));
+    });
+  }, [user]);
+  /* 所属店舗：台帳があれば台帳、なければプログラム内の名簿 */
+  const storeStaff = (sid) => dirStaff ? dirStaff.filter(v => v.storeId === sid).map(v => v.name) : STAFF.filter(n => staffStore(n) === sid);
+  useEffect(() => {
+    if (!user) return;
+    const q = query(collection(db, 'dailyActions'), where('date', '>=', month + '-01'), where('date', '<=', month + '-31'));
+    return onSnapshot(q, (s) => setMonthActions(s.docs.map(d => d.data())));
+  }, [user, month]);
+
+  /* ── 集計（店舗別：今日・月） ── */
+  const todayReports = useMemo(() => reports.filter(r => r.createdAt?.toDate && ymd(r.createdAt.toDate()) === date), [reports, date]);
+  const calc = (rs, sid) => {
+    const filtered = sid ? rs.filter(r => creditStore(r) === sid) : rs;
+    const a = aggregate(filtered, { onlyCounted: false });
+    const out = {};
+    KPI.forEach(k => { out[k.key] = sumGroups(a.byGroup, k.groups); });
+    return out;
+  };
+  const targetOf = (sid) => {
+    const out = {};
+    const ids = sid ? [sid] : MAIN_STORES.map(s => s.id);
+    KPI.forEach(k => { out[k.key] = ids.reduce((s, id) => s + sumGroups(targets[id], k.groups), 0); });
+    return out;
+  };
+  const view = useMemo(() => ({ today: calc(todayReports, storeId), month: calc(reports, storeId), target: targetOf(storeId) }), [reports, todayReports, storeId, targets, basis]);
+
+  /* 次の関門 */
+  const nextGate = GATES.find(g => g.day >= dayNum) || null;
+  const gateNeed = (k) => nextGate ? Math.ceil(view.target[k] * nextGate.rate) : view.target[k];
+  const daysToGate = nextGate ? Math.max(1, nextGate.day - dayNum + 1) : Math.max(1, daysInMonth - dayNum + 1);
+
+  /* ── スタッフ別（今日） ── */
+  const staffList = useMemo(() => {
+    if (!storeId) return [];
+    const base = storeStaff(storeId);
+    const extra = new Set();
+    todayReports.forEach(r => { if (creditStore(r) === storeId && r.counted !== false) { const n = r.proxyStaff || r.staffName; if (n && !base.some(b => norm(b) === norm(n))) extra.add(n); } });
+    return [...base, ...extra];
+  }, [storeId, todayReports, dirStaff, basis]);
+  const staffToday = useMemo(() => {
+    const m = {};
+    staffList.forEach(n => {
+      const rs = todayReports.filter(r => r.counted !== false && norm(r.proxyStaff || r.staffName) === norm(n));
+      const a = aggregate(rs, { onlyCounted: false }); const o = {};
+      KPI.forEach(k => { o[k.key] = sumGroups(a.byGroup, k.groups); });
+      m[n] = o;
+    });
+    return m;
+  }, [staffList, todayReports]);
+  const actSum = (sid) => {
+    const st = (sid ? [actions[sid]] : MAIN_STORES.map(s => actions[s.id])).filter(Boolean);
+    let met = 0, prop = 0;
+    st.forEach(a => Object.values(a.staff || {}).forEach(v => { met += Number(v.met || 0); prop += Number(v.prop || 0); }));
+    return { met, prop };
+  };
+
+  /* ── 行動数の保存 ── */
+  const save = async () => {
+    if (!storeId) return;
+    setSaving(true);
+    try {
+      await setDoc(doc(db, 'dailyActions', `${storeId}_${date}`), { storeId, date, staff: draft.staff, memo: draft.memo, updatedBy: me, updatedAt: new Date() }, { merge: true });
+      setMsg('✅ 保存しました'); setTimeout(() => setMsg(''), 2500);
+    } catch (e) { setMsg('❌ 保存できませんでした: ' + e.message); }
+    setSaving(false);
+  };
+
+  /* ── LINE報告文 ── */
+  const lineText = useMemo(() => {
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+    const name = storeId ? storeName(storeId) : '全店';
+    const t = view.today, m = view.month, g = view.target;
+    const act = actSum(storeId);
+    const L = [];
+    L.push(`📊 ${name}　${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))} ${hh} 報告（${basis === 'acq' ? '獲得店舗' : '開通コード'}）`);
+    L.push(`【今日】新規MNP ${t.shinki}（MNP ${t.mnp}・新規 ${t.shinki - t.mnp}）／機変 ${t.kihen}／UQ→au ${t.up}／ゴールド ${t.gold}／固定 ${t.kotei}／でんき ${t.denki}`);
+    const mp = KPI.filter(k => k.main).map(k => `${k.short} ${m[k.key]}/${g[k.key] || '-'}${g[k.key] ? `（${pct(m[k.key], g[k.key])}%）` : ''}`).join('　');
+    L.push(`【月累計】${mp}`);
+    if (nextGate) {
+      const gp = KPI.filter(k => k.main).map(k => { const need = gateNeed(k.key) - m[k.key]; return `${k.short} ${need <= 0 ? '達成' : 'あと' + need}`; }).join('　');
+      L.push(`【${nextGate.label}まで】${gp}`);
+    }
+    if (act.met || act.prop) L.push(`【行動】他社の方に会った ${act.met}組／提案 ${act.prop}件／決まった ${t.shinki}件`);
+    if (draft.memo) L.push(`【見込・一言】${draft.memo}`);
+    return L.join('\n');
+  }, [view, storeId, date, draft.memo, actions, nextGate, basis]);
+  const copyLine = async () => {
+    try { await navigator.clipboard.writeText(lineText); setMsg('📋 LINE用にコピーしました'); setTimeout(() => setMsg(''), 2500); }
+    catch (e) { setMsg('❌ コピーできませんでした'); }
+  };
+
+  /* ── 全店一覧（部長用） ── */
+  const allStores = useMemo(() => listStores.map(s => {
+    const tdy = calc(todayReports, s.id), mon = calc(reports, s.id), tg = targetOf(s.id);
+    return { id: s.id, name: s.name, tdy, mon, tg, act: actSum(s.id), isEvent: !!s.isEvent };
+  }).filter(s => !s.isEvent || s.mon.shinki + s.mon.kihen + s.mon.up > 0), [reports, todayReports, targets, actions, basis]);
+
+  /* ── Excel出力（その月：店舗別日次／スタッフ別／関門）── */
+  const exportExcel = () => {
+    const wb = XLSX.utils.book_new();
+    const stores = listStores;
+    // ① 店舗別日次
+    const days = [];
+    for (let d = 1; d <= daysInMonth; d++) days.push(`${month}-${String(d).padStart(2, '0')}`);
+    const rows1 = [];
+    days.forEach(dy => {
+      const rs = reports.filter(r => r.createdAt?.toDate && ymd(r.createdAt.toDate()) === dy);
+      if (rs.length === 0 && dy > today) return;
+      stores.forEach(st => {
+        const c = calc(rs, st.id);
+        const act = monthActions.find(a => a.storeId === st.id && a.date === dy);
+        let met = 0, prop = 0; if (act) Object.values(act.staff || {}).forEach(v => { met += Number(v.met || 0); prop += Number(v.prop || 0); });
+        rows1.push({ '日付': dy, '店舗': st.name, '新規MNP': c.shinki, 'MNP': c.mnp, '新規': c.shinki - c.mnp, '機変': c.kihen, 'UQ→au': c.up, 'ゴールド': c.gold, '固定': c.kotei, 'でんき': c.denki, '会った組数': met, '提案数': prop, 'メモ': act?.memo || '' });
+      });
+      const c = calc(rs, null);
+      rows1.push({ '日付': dy, '店舗': '全店', '新規MNP': c.shinki, 'MNP': c.mnp, '新規': c.shinki - c.mnp, '機変': c.kihen, 'UQ→au': c.up, 'ゴールド': c.gold, '固定': c.kotei, 'でんき': c.denki, '会った組数': '', '提案数': '', 'メモ': '' });
+    });
+    const ws1 = XLSX.utils.json_to_sheet(rows1); ws1['!cols'] = [11, 16, 8, 6, 6, 6, 7, 8, 6, 7, 9, 7, 30].map(w => ({ wch: w }));
+    XLSX.utils.book_append_sheet(wb, ws1, '店舗別日次');
+    // ② スタッフ別（月）
+    const rows2 = [];
+    stores.forEach(st => {
+      const names = storeStaff(st.id);
+      names.forEach(n => {
+        const rs = reports.filter(r => r.counted !== false && norm(r.proxyStaff || r.staffName) === norm(n));
+        const a = aggregate(rs, { onlyCounted: false }); const o = {}; KPI.forEach(k => { o[k.key] = sumGroups(a.byGroup, k.groups); });
+        let met = 0, prop = 0, dcount = 0;
+        monthActions.filter(x => x.storeId === st.id).forEach(x => { const v = (x.staff || {})[n]; if (v) { met += Number(v.met || 0); prop += Number(v.prop || 0); dcount++; } });
+        rows2.push({ '店舗': st.name, 'スタッフ': n, '新規MNP': o.shinki, 'MNP': o.mnp, '新規': o.shinki - o.mnp, '機変': o.kihen, 'UQ→au': o.up, 'ゴールド': o.gold, '固定': o.kotei, 'でんき': o.denki, '会った組数(月)': met, '提案数(月)': prop, '入力日数': dcount, '提案→決定率': prop ? Math.round(o.shinki / prop * 100) + '%' : '' });
+      });
+    });
+    const ws2 = XLSX.utils.json_to_sheet(rows2); ws2['!cols'] = [16, 12, 8, 6, 6, 6, 7, 8, 6, 7, 12, 10, 8, 11].map(w => ({ wch: w }));
+    XLSX.utils.book_append_sheet(wb, ws2, 'スタッフ別');
+    // ③ 関門
+    const rows3 = [];
+    stores.forEach(st => {
+      const mon = calc(reports, st.id), tg = targetOf(st.id);
+      KPI.filter(k => k.main || k.key === 'gold').forEach(k => {
+        const row = { '店舗': st.name, '項目': k.label, '月目標': tg[k.key] || '', '累計': mon[k.key], '達成率': tg[k.key] ? Math.round(mon[k.key] / tg[k.key] * 100) + '%' : '' };
+        GATES.forEach(g => { const line = Math.ceil((tg[k.key] || 0) * g.rate); row[`${g.label} ライン`] = tg[k.key] ? line : ''; row[`${g.label} 残り`] = tg[k.key] ? Math.max(0, line - mon[k.key]) : ''; });
+        row['100% 残り'] = tg[k.key] ? Math.max(0, tg[k.key] - mon[k.key]) : '';
+        rows3.push(row);
+      });
+    });
+    const ws3 = XLSX.utils.json_to_sheet(rows3); ws3['!cols'] = [16, 10, 8, 8, 8, ...GATES.flatMap(() => [11, 10]), 9].map(w => ({ wch: w }));
+    XLSX.utils.book_append_sheet(wb, ws3, '関門');
+    XLSX.writeFile(wb, `管理者レポート_${month}_${basis === 'acq' ? '獲得店舗' : '開通コード'}_${today}.xlsx`);
+  };
+
+  const lbl = { fontSize: 10, color: C.mut, marginBottom: 3 };
+  const miniBtn = (c) => ({ padding: '4px 10px', borderRadius: 999, fontSize: 10, fontWeight: 800, cursor: 'pointer', border: `1px solid ${c}`, background: 'transparent', color: c });
+
+  return (
+    <div style={{ padding: '8px 16px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <h1 style={{ fontSize: 16, fontWeight: 900, color: C.w, margin: 0 }}>📋 管理者レポート（日次）</h1>
+        <input type="date" value={date} onChange={e => setDate(e.target.value)} style={{ ...inp, width: 'auto', padding: '5px 8px', fontSize: 11 }} />
+      </div>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+        {(isAdmin || isManager) && <button onClick={() => setStoreId('')} style={miniBtn(storeId === '' ? C.gold : C.mut)}>全店</button>}
+        {listStores.map(s => <button key={s.id} onClick={() => setStoreId(s.id)} style={miniBtn(storeId === s.id ? C.gold : C.mut)}>{s.name.replace('auStyle', '').replace('auショップ', '')}</button>)}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+        <span style={{ fontSize: 10, color: C.mut }}>見方：</span>
+        <button onClick={() => setBasis('acq')} style={miniBtn(basis === 'acq' ? C.green : C.mut)}>獲得店舗で見る</button>
+        <button onClick={() => setBasis('open')} style={miniBtn(basis === 'open' ? C.blue : C.mut)}>開通コードで見る</button>
+      </div>
+      <div style={{ fontSize: 9.5, color: C.mut2, marginBottom: 10, lineHeight: 1.5 }}>
+        {basis === 'acq' ? '獲得店舗：報告の店舗そのまま。アットモバイル・サテライト・イベントは自分の行に出ます（店の実力・評価用）。' : '開通コード：開通先のコードで計上（KDDIのID単位）。アット・サテ・イベントは開通先の店舗に合算されます（実行計画の進捗用）。'}
+      </div>
+
+      {/* ① 今日の数字 */}
+      <div style={card}>
+        <div style={{ fontSize: 11, fontWeight: 800, color: C.w2, marginBottom: 8 }}>① 今日の数字　<span style={{ color: C.mut, fontWeight: 400 }}>{storeId ? storeName(storeId) : '全店'}</span></div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
+          {KPI.map(k => (
+            <div key={k.key} style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: '6px 4px', textAlign: 'center' }}>
+              <div style={{ fontSize: 9, color: C.mut }}>{k.label}</div>
+              <div style={{ fontSize: 18, fontWeight: 900, color: k.color }}>{view.today[k.key]}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ② 月の進捗と関門 */}
+      <div style={card}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: C.w2 }}>② 月の進捗（{Number(month.slice(5))}月）</div>
+          <div style={{ fontSize: 10, color: C.mut }}>{nextGate ? `次の関門：${nextGate.label}（あと${daysToGate}日）` : `月末まであと${daysToGate}日`}</div>
+        </div>
+        {Object.keys(targets).length === 0 && <div style={{ fontSize: 10, color: C.red, marginBottom: 6 }}>⚠️ {Number(month.slice(5))}月の目標が未設定です。管理 → 目標設定で入れてください。</div>}
+        {KPI.filter(k => k.main || k.key === 'gold').map(k => {
+          const a = view.month[k.key], t = view.target[k.key]; const p = pct(a, t);
+          const need = nextGate ? gateNeed(k.key) - a : (t - a);
+          const perDay = need > 0 ? (need / daysToGate).toFixed(1) : 0;
+          return (
+            <div key={k.key} style={{ marginBottom: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+                <span style={{ color: C.w2, fontWeight: 700 }}>{k.label}</span>
+                <span style={{ color: C.mut }}>{a}<span style={{ color: C.mut2 }}>／{t || '-'}</span>　<b style={{ color: p == null ? C.mut2 : p >= 80 ? C.green : p >= 50 ? C.gold : C.red }}>{p == null ? '—' : p + '%'}</b></span>
+              </div>
+              <div style={{ height: 6, background: 'rgba(255,255,255,0.06)', borderRadius: 3, margin: '3px 0', position: 'relative' }}>
+                <div style={{ width: `${Math.min(100, p || 0)}%`, height: '100%', background: k.color, borderRadius: 3 }} />
+                {nextGate && <div style={{ position: 'absolute', left: `${nextGate.rate * 100}%`, top: -2, width: 2, height: 10, background: C.w }} />}
+              </div>
+              <div style={{ fontSize: 10, color: need <= 0 ? C.green : C.mut }}>
+                {t ? (need <= 0 ? `✓ ${nextGate ? nextGate.label : '月目標'} 達成` : `${nextGate ? nextGate.label : '月末'}まで あと${need}件（1日 ${perDay}件）`) : '目標未設定'}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ③ スタッフ別（店舗のとき） */}
+      {storeId && (
+        <div style={card}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: C.w2, marginBottom: 4 }}>③ スタッフ別（今日）と終礼の数字</div>
+          <div style={{ fontSize: 9.5, color: C.mut, marginBottom: 8 }}>獲得は報告から自動。「会った」「提案」は終礼で店長が入力（他社の方に会った組数／提案した件数）。</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 0.7fr 0.7fr 0.7fr 0.9fr 0.9fr', gap: 4, fontSize: 9, color: C.mut, marginBottom: 4, textAlign: 'center' }}>
+            <div style={{ textAlign: 'left' }}>スタッフ</div><div>新規MNP</div><div>機変</div><div>UQ→au</div><div>会った</div><div>提案</div>
+          </div>
+          {staffList.map(n => {
+            const s = staffToday[n] || {}; const a = draft.staff[n] || {};
+            const zero = !s.shinki && !s.kihen && !s.up;
+            return (
+              <div key={n} style={{ display: 'grid', gridTemplateColumns: '1.6fr 0.7fr 0.7fr 0.7fr 0.9fr 0.9fr', gap: 4, alignItems: 'center', padding: '4px 0', borderTop: C.line, background: zero ? 'rgba(248,113,113,0.05)' : 'transparent' }}>
+                <div style={{ fontSize: 11, color: zero ? C.red : C.w2, fontWeight: 700 }}>{n}</div>
+                <div style={{ textAlign: 'center', fontSize: 12, fontWeight: 900, color: s.shinki ? C.green : C.mut2 }}>{s.shinki || 0}</div>
+                <div style={{ textAlign: 'center', fontSize: 12, fontWeight: 900, color: s.kihen ? C.gold : C.mut2 }}>{s.kihen || 0}</div>
+                <div style={{ textAlign: 'center', fontSize: 12, fontWeight: 900, color: s.up ? C.purple : C.mut2 }}>{s.up || 0}</div>
+                <input type="number" min="0" value={a.met ?? ''} onChange={e => setDraft(d => ({ ...d, staff: { ...d.staff, [n]: { ...(d.staff[n] || {}), met: e.target.value } } }))} style={{ ...inp, padding: 5, textAlign: 'center' }} />
+                <input type="number" min="0" value={a.prop ?? ''} onChange={e => setDraft(d => ({ ...d, staff: { ...d.staff, [n]: { ...(d.staff[n] || {}), prop: e.target.value } } }))} style={{ ...inp, padding: 5, textAlign: 'center' }} />
+              </div>
+            );
+          })}
+          <div style={{ marginTop: 8 }}>
+            <div style={lbl}>見込み・一言（LINE報告に入ります）</div>
+            <input value={draft.memo} onChange={e => setDraft(d => ({ ...d, memo: e.target.value }))} placeholder="例：来店予約 明日3件・見込A 2件／午後は家族提案に集中" style={inp} />
+          </div>
+          <button onClick={save} disabled={saving} style={{ width: '100%', marginTop: 8, padding: 10, borderRadius: 10, border: 'none', background: C.green, color: '#000', fontSize: 12, fontWeight: 900, cursor: 'pointer' }}>{saving ? '保存中…' : '💾 終礼の数字を保存'}</button>
+        </div>
+      )}
+
+      {/* ④ 全店一覧（全店のとき） */}
+      {!storeId && (
+        <div style={card}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: C.w2, marginBottom: 8 }}>④ 店舗別（今日・月・{nextGate ? nextGate.label : '月末'}まで）</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 0.7fr 0.9fr 0.9fr 0.8fr 0.8fr', gap: 4, fontSize: 9, color: C.mut, marginBottom: 4, textAlign: 'center' }}>
+            <div style={{ textAlign: 'left' }}>店舗</div><div>今日<br />新規MNP</div><div>新規MNP<br />月累計</div><div>機変<br />月累計</div><div>関門まで<br />新規MNP</div><div>提案<br />(今日)</div>
+          </div>
+          {allStores.map(s => {
+            const p = pct(s.mon.shinki, s.tg.shinki); const pk = pct(s.mon.kihen, s.tg.kihen);
+            const need = nextGate ? Math.ceil(s.tg.shinki * nextGate.rate) - s.mon.shinki : s.tg.shinki - s.mon.shinki;
+            return (
+              <div key={s.id} style={{ display: 'grid', gridTemplateColumns: '1.3fr 0.7fr 0.9fr 0.9fr 0.8fr 0.8fr', gap: 4, alignItems: 'center', padding: '5px 0', borderTop: C.line, textAlign: 'center' }}>
+                <div style={{ textAlign: 'left', fontSize: 11, color: C.w2, fontWeight: 700 }}>{s.name.replace('auStyle', '').replace('auショップ', '')}</div>
+                <div style={{ fontSize: 13, fontWeight: 900, color: s.tdy.shinki ? C.green : C.mut2 }}>{s.tdy.shinki}</div>
+                <div style={{ fontSize: 11, color: C.w2 }}>{s.mon.shinki}/{s.tg.shinki || '-'}<br /><span style={{ fontSize: 9, color: p == null ? C.mut2 : p >= 80 ? C.green : p >= 50 ? C.gold : C.red }}>{p == null ? '—' : p + '%'}</span></div>
+                <div style={{ fontSize: 11, color: C.w2 }}>{s.mon.kihen}/{s.tg.kihen || '-'}<br /><span style={{ fontSize: 9, color: pk == null ? C.mut2 : pk >= 80 ? C.green : pk >= 50 ? C.gold : C.red }}>{pk == null ? '—' : pk + '%'}</span></div>
+                <div style={{ fontSize: 11, fontWeight: 800, color: !s.tg.shinki ? C.mut2 : need <= 0 ? C.green : C.red }}>{!s.tg.shinki ? '—' : need <= 0 ? '達成' : `あと${need}`}</div>
+                <div style={{ fontSize: 11, color: s.act.prop ? C.w2 : C.mut2 }}>{s.act.prop || '-'}</div>
+              </div>
+            );
+          })}
+          <div style={{ fontSize: 9.5, color: C.mut, marginTop: 6 }}>{basis === 'acq' ? '※ 獲得店舗で集計（イベント・アット・サテは自分の行）。' : '※ 開通コードで集計（イベント・アット・サテは開通先に合算）。'}外注の獲得を含みます。</div>
+        </div>
+      )}
+
+      {/* ⑤ LINE報告 */}
+      <div style={card}>
+        <div style={{ fontSize: 11, fontWeight: 800, color: C.w2, marginBottom: 6 }}>⑤ LINE報告文（12時・15時・18時）</div>
+        <pre style={{ background: 'rgba(0,0,0,0.4)', borderRadius: 8, padding: 10, fontSize: 10.5, color: C.w2, lineHeight: 1.6, margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{lineText}</pre>
+        <button onClick={copyLine} style={{ width: '100%', marginTop: 8, padding: 11, borderRadius: 10, border: 'none', background: C.gold, color: '#000', fontSize: 13, fontWeight: 900, cursor: 'pointer' }}>📋 LINE用にコピー</button>
+        <button onClick={exportExcel} style={{ width: '100%', marginTop: 6, padding: 9, borderRadius: 10, border: '1px solid rgba(52,211,153,0.4)', background: 'rgba(52,211,153,0.12)', color: C.green, fontSize: 12, fontWeight: 900, cursor: 'pointer' }}>📥 Excel出力（{Number(month.slice(5))}月：店舗別日次・スタッフ別・関門）</button>
+        {msg && <div style={{ textAlign: 'center', fontSize: 11, marginTop: 6, color: msg.startsWith('❌') ? C.red : C.green, fontWeight: 700 }}>{msg}</div>}
+      </div>
+
+      <div style={{ fontSize: 9.5, color: C.mut2, lineHeight: 1.6 }}>
+        ※ 新規MNPはO19〜59・タブレットを除く。UQ→auは番号移行(UQ→au)。目標は「管理 → 目標設定」の値を合計しています。<br />
+        ※ 関門：5日25%・12日50%・19日75%・20日80%。届いていない分は残り日数で割り直してください。
+      </div>
+    </div>
+  );
+}

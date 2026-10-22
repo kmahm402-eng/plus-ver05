@@ -1,0 +1,82 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===== 役割の判定 =====
+    // users/{自分のID} の role を見る。無ければ 'staff' とみなす。
+    function signedIn() {
+      return request.auth != null;
+    }
+    function userRole() {
+      return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'staff')
+        : 'staff';
+    }
+    function isAdmin()   { return userRole() == 'admin'; }                // 社長・経理
+    function isManager() { return userRole() in ['admin', 'manager']; }   // 部長・店長 以上
+
+    // ===== ユーザー情報（役割の保護がいちばん大事） =====
+    // ・読み取り：ログイン済みなら可
+    // ・本人：自分のdocだけ。新規は staff のみ。更新で role は変えられない。
+    // ・他人のdoc／役割の付与・変更／削除：管理者(admin)だけ
+    match /users/{userId} {
+      allow read: if signedIn();
+      allow create: if isAdmin()
+        || (request.auth.uid == userId && request.resource.data.get('role', 'staff') == 'staff');
+      allow update: if isAdmin()
+        || (request.auth.uid == userId && request.resource.data.get('role', 'staff') == resource.data.get('role', 'staff'));
+      allow delete: if isAdmin();
+    }
+
+    // ===== 報告本体（給与計算の元データ・2026-07-11 保護強化） =====
+    // ・読み取り：ログイン済みなら可（各画面の集計に必要）
+    // ・新規作成：ログイン済みなら可。ただし自分のuidでしか作れない
+    // ・書き換え：本人／店長・部長以上（データ整理画面用）。
+    //   例外：サンクスコールの記録（tycで始まる項目だけの変更）は全スタッフ可
+    // ・削除：本人／店長・部長以上 だけ（他人の報告は消せない）
+    match /reports/{docId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
+      allow update: if isManager()
+        || (signedIn() && resource.data.get('uid', '') == request.auth.uid)
+        || (signedIn() && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['tycStatus', 'tycDoneAt', 'tycNote', 'tycSnoozeTo']));
+      allow delete: if isManager()
+        || (signedIn() && resource.data.get('uid', '') == request.auth.uid);
+    }
+
+    // ===== スタッフの通常業務データ（ログイン済みなら読み書きOK） =====
+    match /staffTargets/{docId}      { allow read, write: if signedIn(); }  // 個人目標
+    match /declarations/{docId}      { allow read, write: if signedIn(); }  // カルテ
+    match /recommendations/{docId}   { allow read, write: if signedIn(); }  // ダッシュボード：推奨
+    match /coachingReactions/{docId} { allow read, write: if signedIn(); }  // ダッシュボード：リアクション
+    match /storeMonthlyCheck/{docId} { allow read, write: if signedIn(); }  // 月次達成チェック（店舗が入力）
+    match /pipeline/{docId}          { allow read, write: if signedIn(); }  // パイプライン（商談）
+    match /events/{docId}            { allow read, write: if signedIn(); }  // イベント
+    match /eventConfig/{docId}       { allow read, write: if signedIn(); }  // イベント設定
+    match /eventFunnel/{docId}       { allow read, write: if signedIn(); }  // イベントの推移
+    match /customers/{docId}         { allow read, write: if signedIn(); }  // 顧客管理（3年フォロー・2026-09-24 追加）
+    match /dailyActions/{docId}      { allow read, write: if signedIn(); }  // 管理者レポート：終礼の行動数（2026-10-01 追加）
+    match /storePlans/{docId}        { allow read: if signedIn(); allow write: if isManager(); }  // 店舗運営プラン（月初の計画と進捗・2026-10-05 追加）
+
+    // ===== 部長・店長 以上が書き換え可（読みは全員） =====
+    match /storeTargets/{docId}       { allow read: if signedIn(); allow write: if isManager(); }  // 目標設定
+    match /kddiResults/{docId}        { allow read: if signedIn(); allow write: if isManager(); }  // KDDI結果指標
+    match /auStyleBonusConfig/{docId} { allow read: if signedIn(); allow write: if isManager(); }  // 強化商材 奨励金（設定）
+    match /auStyleBonusRates/{docId}  { allow read: if signedIn(); allow write: if isManager(); }  // 強化商材 奨励金の率（店舗ごと・月ごとの手入力）
+
+    // ===== 社長・経理(admin)だけが書き換え可（読みは全員） =====
+    match /incentiveConfig/{docId} { allow read: if signedIn(); allow write: if isAdmin(); }  // 報酬設定
+    match /pointConfig/{docId}     { allow read: if signedIn(); allow write: if isAdmin(); }  // ポイント設定
+    match /library/{docId}         { allow read: if signedIn(); allow write: if isAdmin(); }  // コンテンツライブラリ（記事）
+    match /staffDirectory/{docId}  { allow read: if signedIn(); allow write: if isAdmin(); }  // スタッフ台帳（2026-07-24 追加）
+    match /storeDirectory/{docId}  { allow read: if signedIn(); allow write: if isAdmin(); }  // 店舗台帳（2026-07-24 追加）
+    match /campaigns/{docId}       { allow read: if signedIn(); allow write: if isAdmin(); }  // キャンペーン設定（2026-07-26 追加）
+    match /announcements/{docId}   { allow read: if signedIn(); allow write: if isAdmin(); }  // お知らせ（2026-07-26 追加）
+
+    // 上記以外はデフォルト拒否（明示的）
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

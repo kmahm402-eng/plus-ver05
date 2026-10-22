@@ -1,0 +1,124 @@
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import BottomNav from './components/BottomNav';
+import MonthlyCheckNag from './components/MonthlyCheckNag';
+import Login from './pages/Login';
+import ProfileSetup from './pages/ProfileSetup';
+import ProfileEdit from './pages/ProfileEdit';
+import ThankYouCalls from './pages/ThankYouCalls';
+import AuStyleBonus from './pages/AuStyleBonus';
+import PointSettings from './pages/PointSettings';
+import KddiResults from './pages/KddiResults';
+import BotSend from './pages/BotSend';
+import DataCleanup from './pages/DataCleanup';
+import Home from './pages/Home';
+import Report from './pages/Report';
+import TargetDashboard from './pages/TargetDashboard';
+import TargetSetting from './pages/TargetSetting';
+import PersonalTarget from './pages/PersonalTarget';
+import PersonalIncentive from './pages/PersonalIncentive';
+import PayrollSummary from './pages/PayrollSummary';
+import StoreMonthlyCheck from './pages/StoreMonthlyCheck';
+import Manage from './pages/Manage';
+import KpiDashboard from './pages/KpiDashboard';
+import EventSummary from './pages/EventSummary';
+import Pipeline from './pages/Pipeline';
+import IncentiveSettings from './pages/IncentiveSettings';
+import ExcelExport from './pages/ExcelExport';
+import Karute from './pages/Karute';
+import CoachingDashboard from './pages/CoachingDashboard';
+import Library from './pages/Library';
+
+function Protected({ children }) {
+  const { user, profile, loading } = useAuth();
+  if (loading) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#0F0D1A', color: '#FBBF24', fontSize: 14 }}>読み込み中…</div>;
+  if (!user) return <Navigate to="/login" replace />;
+  if (!profile) return <ProfileSetup />;
+  return children;
+}
+
+// 役割による画面ガード。権限が無ければホームへ戻す。
+//  grade: 'event'=イベント担当以上 / 'manager'=部長・店長以上 / 'admin'=管理者だけ
+function RoleRoute({ grade, children }) {
+  const { isAdmin, isManager, isEvent } = useAuth();
+  const ok =
+    grade === 'event' ? (isEvent || isManager)
+      : grade === 'manager' ? isManager
+      : grade === 'admin' ? isAdmin
+      : true;
+  if (!ok) return <Navigate to="/" replace />;
+  return children;
+}
+
+// 全ページ共通の「← 戻る」バー。ホーム(/)では出さない。押すと直前のページに戻る。
+function BackBar() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  if (location.pathname === '/') return null; // ホームは戻り先が無いので非表示
+
+  const goBack = () => {
+    // 履歴があれば直前へ、無ければ管理メニューへフォールバック
+    if (window.history.length > 1) navigate(-1);
+    else navigate('/manage');
+  };
+
+  return (
+    <div style={{ position: 'sticky', top: 0, zIndex: 50, background: 'rgba(15,13,26,0.95)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', padding: '10px 14px', borderBottom: '1px solid #2A2640' }}>
+      <button
+        onClick={goBack}
+        style={{ background: '#1C1830', border: '1px solid #2A2640', color: '#FBBF24', fontSize: 14, fontWeight: 600, cursor: 'pointer', padding: '8px 16px', borderRadius: 10, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+      >
+        ← 戻る
+      </button>
+    </div>
+  );
+}
+
+function Layout() {
+  return (
+    <div style={{ minHeight: '100vh', background: '#0F0D1A', color: '#fff', paddingBottom: 72 }}>
+      <MonthlyCheckNag />
+      <BackBar />
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/report" element={<Report />} />
+        <Route path="/target" element={<TargetDashboard />} />
+        <Route path="/target-setting" element={<RoleRoute grade="manager"><TargetSetting /></RoleRoute>} />
+        <Route path="/me" element={<PersonalTarget />} />
+        <Route path="/incentive" element={<PersonalIncentive />} />
+        <Route path="/monthly-check" element={<RoleRoute grade="manager"><StoreMonthlyCheck /></RoleRoute>} />
+        <Route path="/manage" element={<Manage />} />
+        <Route path="/kpi" element={<RoleRoute grade="manager"><KpiDashboard /></RoleRoute>} />
+        <Route path="/events" element={<RoleRoute grade="event"><EventSummary /></RoleRoute>} />
+        <Route path="/pipeline" element={<Pipeline />} />
+        <Route path="/incentive-settings" element={<RoleRoute grade="admin"><IncentiveSettings /></RoleRoute>} />
+        <Route path="/payroll" element={<RoleRoute grade="admin"><PayrollSummary /></RoleRoute>} />
+        <Route path="/excel" element={<RoleRoute grade="manager"><ExcelExport /></RoleRoute>} />
+        <Route path="/profile-edit" element={<ProfileEdit />} />
+        <Route path="/thank-you-calls" element={<ThankYouCalls />} />
+        <Route path="/austyle-bonus" element={<RoleRoute grade="manager"><AuStyleBonus /></RoleRoute>} />
+        <Route path="/point-settings" element={<RoleRoute grade="admin"><PointSettings /></RoleRoute>} />
+        <Route path="/kddi-results" element={<RoleRoute grade="manager"><KddiResults /></RoleRoute>} />
+        <Route path="/bot-send" element={<RoleRoute grade="admin"><BotSend /></RoleRoute>} />
+        <Route path="/data-cleanup" element={<RoleRoute grade="admin"><DataCleanup /></RoleRoute>} />
+        <Route path="/karute" element={<Karute />} />
+        <Route path="/library" element={<Library />} />
+        <Route path="/coaching-dashboard" element={<RoleRoute grade="manager"><CoachingDashboard /></RoleRoute>} />
+      </Routes>
+      <BottomNav />
+    </div>
+  );
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AuthProvider>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route path="/*" element={<Protected><Layout /></Protected>} />
+        </Routes>
+      </AuthProvider>
+    </BrowserRouter>
+  );
+}

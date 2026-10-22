@@ -1,0 +1,13 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "declarations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "staffName", "order": "ASCENDING" },
+        { "fieldPath": "month", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

@@ -1,0 +1,35 @@
+/* ダークテーマ用のグローバル設定 */
+:root {
+  color-scheme: dark;
+}
+
+/* 入力系をすべてダーク扱いに（ブラウザ標準UIの白背景を防ぐ） */
+select, input, textarea {
+  color-scheme: dark;
+}
+
+/* プルダウンの選択肢を明示的にダーク背景に */
+select option {
+  background-color: #1a1625;
+  color: #ffffff;
+  padding: 6px;
+}
+select option:checked,
+select option:hover {
+  background-color: #2a2640;
+  color: #FBBF24;
+}
+select optgroup {
+  background-color: #0F0D1A;
+  color: #94A3B8;
+  font-style: italic;
+  font-weight: 700;
+}
+
+/* 日付入力のカレンダーアイコンも見やすく */
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.8);
+  cursor: pointer;
+}
